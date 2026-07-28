@@ -1,0 +1,6 @@
+{
+  "name": "LectureBridge AI - Bilingual Classroom Assistant",
+  "description": "Real-time bilingual lecture assistant for international students, featuring live transcription, progressive Chinese summarization, jargon extraction, and audio rescue tools.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
