@@ -1,6 +1,81 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { extname, join, relative, sep } from "node:path";
 
-const workerSource = `const json = (payload, status = 200) =>
+const contentTypeByExtension = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2"
+};
+
+const staticAssets = {};
+
+const collectStaticAssets = (directory) => {
+  for (const entry of readdirSync(directory)) {
+    const absolutePath = join(directory, entry);
+    const relativePath = relative("dist", absolutePath).split(sep).join("/");
+
+    if (relativePath === "server" || relativePath.startsWith("server/")) continue;
+    if (relativePath === ".openai" || relativePath.startsWith(".openai/")) continue;
+    if (relativePath === "server.cjs" || relativePath === "server.cjs.map") continue;
+
+    const stats = statSync(absolutePath);
+    if (stats.isDirectory()) {
+      collectStaticAssets(absolutePath);
+      continue;
+    }
+
+    staticAssets[`/${relativePath}`] = {
+      contentType: contentTypeByExtension[extname(relativePath)] || "application/octet-stream",
+      base64: readFileSync(absolutePath).toString("base64")
+    };
+  }
+};
+
+collectStaticAssets("dist");
+
+const workerSource = `const staticAssets = ${JSON.stringify(staticAssets)};
+
+const decodeBase64 = (value) => {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+};
+
+const staticResponse = (request, pathname) => {
+  if (request.method !== "GET" && request.method !== "HEAD") return null;
+
+  const asset =
+    staticAssets[pathname] ||
+    staticAssets[pathname.endsWith("/") ? \`\${pathname}index.html\` : \`\${pathname}/index.html\`];
+
+  const acceptsHtml = request.headers.get("accept")?.includes("text/html");
+  const fallbackAsset = acceptsHtml ? staticAssets["/index.html"] : null;
+  const selected = asset || fallbackAsset;
+  if (!selected) return null;
+
+  return new Response(request.method === "HEAD" ? null : decodeBase64(selected.base64), {
+    headers: {
+      "content-type": selected.contentType,
+      "cache-control": selected.contentType.startsWith("text/html")
+        ? "no-cache"
+        : "public, max-age=31536000, immutable"
+    }
+  });
+};
+
+const json = (payload, status = 200) =>
   new Response(JSON.stringify(payload), {
     status,
     headers: {
@@ -366,14 +441,10 @@ export default {
       return json({ success: false, error: "API route not found." }, 404);
     }
 
-    if (env.ASSETS && typeof env.ASSETS.fetch === "function") {
-      return env.ASSETS.fetch(request);
-    }
+    const assetResponse = staticResponse(request, url.pathname);
+    if (assetResponse) return assetResponse;
 
-    return new Response("LectureBridge AI static assets are not available in this runtime.", {
-      status: 500,
-      headers: { "content-type": "text/plain; charset=utf-8" }
-    });
+    return new Response("Not found", { status: 404 });
   }
 };
 `;
