@@ -45,6 +45,8 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
   const [rescueTimestamp, setRescueTimestamp] = useState("");
   const [activeHoverTerm, setActiveHoverTerm] = useState<GlossaryTerm | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [liveAudioStatus, setLiveAudioStatus] = useState("待机");
+  const [liveAudioError, setLiveAudioError] = useState("");
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -52,6 +54,7 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
   const audioGainRef = useRef<GainNode | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const liveAudioWsRef = useRef<WebSocket | null>(null);
+  const liveAudioModeRef = useRef<"ws" | "http" | null>(null);
   const pcmQueueRef = useRef<Int16Array[]>([]);
   const queuedSampleCountRef = useRef(0);
   const audioSeqRef = useRef(0);
@@ -186,9 +189,75 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     return btoa(binary);
   };
 
+  const wavBase64FromPcm = (pcm: Int16Array, sampleRate = 16000) => {
+    const headerSize = 44;
+    const buffer = new ArrayBuffer(headerSize + pcm.byteLength);
+    const view = new DataView(buffer);
+    const writeAscii = (offset: number, value: string) => {
+      for (let i = 0; i < value.length; i += 1) {
+        view.setUint8(offset + i, value.charCodeAt(i));
+      }
+    };
+
+    writeAscii(0, "RIFF");
+    view.setUint32(4, 36 + pcm.byteLength, true);
+    writeAscii(8, "WAVE");
+    writeAscii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeAscii(36, "data");
+    view.setUint32(40, pcm.byteLength, true);
+    new Uint8Array(buffer, headerSize).set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
+
+    return int16ToBase64(new Int16Array(buffer));
+  };
+
+  const transcribePcmChunk = async (pcm: Int16Array) => {
+    if (pcm.length === 0) return;
+    audioSeqRef.current += 1;
+
+    try {
+      const res = await fetch("/api/transcribe-audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: sessionIdRef.current,
+          seq: audioSeqRef.current,
+          mimeType: "audio/wav",
+          format: "wav",
+          base64Audio: wavBase64FromPcm(pcm),
+          sourceLang: "en",
+          targetLang: "en",
+          courseTitle: selectedCourse.title,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && (data.textEn || data.text || data.translatedText)) {
+        analyzeAndAppendTranscript(data.textEn || data.text || data.translatedText);
+        setLiveAudioStatus("HTTP 分片转写中");
+      } else {
+        setLiveAudioError(data.error || "HTTP audio transcription failed.");
+      }
+    } catch (err) {
+      setLiveAudioError(err instanceof Error ? err.message : "HTTP audio transcription failed.");
+    }
+  };
+
   const sendPcmChunk = (pcm: Int16Array) => {
+    if (pcm.length === 0) return;
+
+    if (liveAudioModeRef.current === "http") {
+      void transcribePcmChunk(pcm);
+      return;
+    }
+
     const socket = liveAudioWsRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN || pcm.length === 0) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
 
     audioSeqRef.current += 1;
     socket.send(JSON.stringify({
@@ -205,7 +274,8 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     pcmQueueRef.current.push(pcm);
     queuedSampleCountRef.current += pcm.length;
 
-    if (queuedSampleCountRef.current >= 16000) {
+    const threshold = liveAudioModeRef.current === "http" ? 48000 : 16000;
+    if (queuedSampleCountRef.current >= threshold) {
       const merged = mergePcmChunks(pcmQueueRef.current, queuedSampleCountRef.current);
       pcmQueueRef.current = [];
       queuedSampleCountRef.current = 0;
@@ -258,6 +328,7 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
   const connectLiveAudioSocket = () => {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
     const socket = new WebSocket(`${protocol}://${window.location.host}/api/live-audio`);
+    let settled = false;
 
     socket.onmessage = (event) => {
       try {
@@ -265,7 +336,11 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
         if (data.type === "transcript" && (data.punctuatedText || data.textEn)) {
           analyzeAndAppendTranscript(data.punctuatedText || data.textEn);
         }
+        if (data.type === "ready") {
+          setLiveAudioStatus("WebSocket 实时转写中");
+        }
         if (data.type === "error") {
+          setLiveAudioError(data.message || "Live audio error.");
           console.error("Live audio error:", data.message);
         }
       } catch (err) {
@@ -274,6 +349,7 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     };
 
     socket.onerror = (event) => {
+      setLiveAudioError("WebSocket audio channel failed. Falling back when possible.");
       console.error("Live audio socket error:", event);
     };
 
@@ -282,8 +358,25 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     };
 
     return new Promise<WebSocket>((resolve, reject) => {
-      socket.onopen = () => resolve(socket);
-      socket.onerror = (event) => reject(event);
+      const timeout = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        socket.close();
+        reject(new Error("WebSocket audio channel timed out."));
+      }, 4000);
+
+      socket.onopen = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        resolve(socket);
+      };
+      socket.onerror = (event) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        reject(event);
+      };
     });
   };
 
@@ -307,8 +400,10 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     audioStreamRef.current = null;
     audioContextRef.current = null;
     liveAudioWsRef.current = null;
+    liveAudioModeRef.current = null;
     pcmQueueRef.current = [];
     queuedSampleCountRef.current = 0;
+    setLiveAudioStatus("待机");
   };
 
   // Real Browser Microphone Recording via Web Audio + Qwen LiveTranslate WebSocket
@@ -318,8 +413,17 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
       setIsRecording(false);
     } else {
       try {
-        const socket = await connectLiveAudioSocket();
+        setLiveAudioError("");
+        setLiveAudioStatus("连接千问实时通道中");
+
+        const socket = await connectLiveAudioSocket().catch((err) => {
+          console.warn("Live WebSocket unavailable, using HTTP fallback:", err);
+          setLiveAudioError("实时 WebSocket 不可用，已切换为 HTTP 分片转写。");
+          setLiveAudioStatus("HTTP 分片转写准备中");
+          return null;
+        });
         liveAudioWsRef.current = socket;
+        liveAudioModeRef.current = socket ? "ws" : "http";
 
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
@@ -345,6 +449,7 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
         audioProcessorRef.current = processor;
         audioGainRef.current = silentGain;
         setIsRecording(true);
+        if (!socket) setLiveAudioStatus("HTTP 分片转写中");
       } catch (err) {
         stopRealtimeMicSession();
         alert("无法访问麦克风，请确保浏览器已允许麦克风权限。");
@@ -485,7 +590,7 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
           {/* Audio Source Notice */}
           <div className="hidden xl:flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-black/30 border border-white/10 text-[11px] text-slate-300">
             <Mic className="w-3.5 h-3.5 text-cyan-400" />
-            <span>输入源: 本机麦克风</span>
+            <span>输入源: 本机麦克风 · {liveAudioStatus}</span>
           </div>
 
           {/* Simulated Speech Toggle */}
@@ -523,6 +628,13 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
         </div>
 
       </div>
+
+      {liveAudioError && (
+        <div className="glass-card rounded-xl px-4 py-3 border border-amber-500/30 bg-amber-950/20 text-xs text-amber-200 flex items-start space-x-2">
+          <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-300 shrink-0" />
+          <span>{liveAudioError}</span>
+        </div>
+      )}
 
       {/* Main Dual-Column Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[620px]">
