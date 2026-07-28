@@ -87,6 +87,7 @@ const json = (payload, status = 200) =>
 const asArray = (value) => Array.isArray(value) ? value : [];
 const asString = (value, fallback = "") => typeof value === "string" ? value : fallback;
 const asNumber = (value, fallback) => typeof value === "number" ? value : fallback;
+const qwenTimeoutMs = (env) => Number(env.QWEN_HTTP_TIMEOUT_MS || 45000);
 
 const stripJsonFences = (value) =>
   String(value || "")
@@ -111,25 +112,35 @@ const qwenJson = async (env, routeName, prompt) => {
   }
 
   const baseUrl = env.QWEN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
-  const response = await fetch(\`\${baseUrl.replace(/\\/$/, "")}/chat/completions\`, {
-    method: "POST",
-    headers: {
-      "authorization": \`Bearer \${env.DASHSCOPE_API_KEY}\`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      model: env.QWEN_CHAT_MODEL || "qwen3.7-plus",
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "You are a precise bilingual academic assistant. Always return only valid JSON. Do not use markdown fences."
-        },
-        { role: "user", content: prompt }
-      ]
-    })
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), qwenTimeoutMs(env));
+  let response;
+  try {
+    response = await fetch(\`\${baseUrl.replace(/\\/$/, "")}/chat/completions\`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "authorization": \`Bearer \${env.DASHSCOPE_API_KEY}\`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.QWEN_CHAT_MODEL || "qwen3.7-plus",
+        temperature: 0.2,
+        max_tokens: 1200,
+        enable_thinking: false,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: "You are a precise bilingual academic assistant. Always return only valid JSON. Do not use markdown fences."
+          },
+          { role: "user", content: prompt }
+        ]
+      })
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -149,6 +160,129 @@ const qwenJson = async (env, routeName, prompt) => {
 const apiError = (error, fallback) => {
   const message = error instanceof Error ? error.message : fallback;
   return json({ success: false, error: message }, error?.status || 502);
+};
+
+const getAudioFormat = (mimeType, explicitFormat) => {
+  const format = explicitFormat || mimeType?.split(";")[0]?.split("/")[1] || "wav";
+  if (format === "mpeg") return "mp3";
+  if (format === "x-wav") return "wav";
+  return format.toLowerCase();
+};
+
+const normalizeAudioData = (base64Audio, audioUrl, mimeType) => {
+  const trimmedUrl = String(audioUrl || "").trim();
+  if (trimmedUrl) return trimmedUrl;
+
+  const trimmedAudio = String(base64Audio || "").trim();
+  if (!trimmedAudio) return "";
+  if (trimmedAudio.startsWith("data:") || /^https?:\\/\\//i.test(trimmedAudio)) return trimmedAudio;
+  return \`data:\${mimeType || "audio/wav"};base64,\${trimmedAudio}\`;
+};
+
+const parseSseJsonLine = (line) => {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return null;
+  const payload = trimmed.slice(5).trim();
+  if (!payload || payload === "[DONE]") return null;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+};
+
+const extractTextFromCompletionChunk = (chunk) => {
+  const delta = chunk?.choices?.[0]?.delta;
+  return [
+    delta?.content,
+    delta?.audio?.transcript,
+    delta?.audio?.translation,
+    chunk?.output_text,
+    chunk?.text
+  ]
+    .filter((value) => typeof value === "string")
+    .join("");
+};
+
+const transcribeAudioWithQwen = async (env, payload) => {
+  const audioData = normalizeAudioData(payload?.base64Audio, payload?.audioUrl, payload?.mimeType);
+  if (!audioData) {
+    const error = new Error("Audio data is required.");
+    error.status = 400;
+    throw error;
+  }
+
+  if (!env.DASHSCOPE_API_KEY) {
+    const error = new Error("DASHSCOPE_API_KEY environment variable is missing.");
+    error.status = 500;
+    throw error;
+  }
+
+  const baseUrl = (env.QWEN_AUDIO_BASE_URL || env.QWEN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\\/$/, "");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), qwenTimeoutMs(env));
+  let response;
+  try {
+    response = await fetch(\`\${baseUrl}/chat/completions\`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "authorization": \`Bearer \${env.DASHSCOPE_API_KEY}\`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.QWEN_AUDIO_HTTP_MODEL || "qwen3-livetranslate-flash",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_audio",
+                input_audio: {
+                  data: audioData,
+                  format: getAudioFormat(payload?.mimeType, payload?.format)
+                }
+              }
+            ]
+          }
+        ],
+        modalities: ["text"],
+        stream: true,
+        stream_options: { include_usage: false },
+        translation_options: {
+          source_lang: payload?.sourceLang || "en",
+          target_lang: payload?.targetLang || "zh"
+        }
+      })
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    const error = new Error(message || \`Qwen audio transcription failed with HTTP \${response.status}.\`);
+    error.status = response.status;
+    throw error;
+  }
+  if (!response.body) throw new Error("Qwen audio transcription returned an empty stream.");
+
+  let translatedText = "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const text = decoder.decode(value, { stream: true });
+    for (const line of text.split(/\\r?\\n/)) {
+      const chunk = parseSseJsonLine(line);
+      if (chunk) translatedText += extractTextFromCompletionChunk(chunk);
+    }
+  }
+
+  const finalText = translatedText.trim();
+  if (!finalText) throw new Error("Qwen audio transcription returned no text.");
+  return finalText;
 };
 
 const normalizeTerms = (raw) => {
@@ -231,6 +365,186 @@ const readJson = async (request) => {
   } catch {
     return {};
   }
+};
+
+const buildRealtimeUrl = (env) => {
+  const baseUrl = env.QWEN_REALTIME_WS_URL || "wss://dashscope.aliyuncs.com/api-ws/v1/realtime";
+  const model = env.QWEN_REALTIME_MODEL || "qwen3.5-livetranslate-flash-realtime";
+  const separator = baseUrl.includes("?") ? "&" : "?";
+  return \`\${baseUrl}\${separator}model=\${encodeURIComponent(model)}\`;
+};
+
+const buildRealtimeSessionUpdate = () => ({
+  event_id: \`session-\${Date.now()}\`,
+  type: "session.update",
+  session: {
+    modalities: ["text"],
+    sample_rate: 16000,
+    input_audio_format: "pcm",
+    input_audio_transcription: {
+      model: "qwen3-asr-flash-realtime",
+      language: "en"
+    },
+    translation: {
+      language: "zh"
+    }
+  }
+});
+
+const findTextValue = (value) => {
+  if (!value || typeof value !== "object") return "";
+  const directKeys = ["transcript", "text", "translation", "content"];
+  for (const key of directKeys) {
+    if (typeof value[key] === "string" && value[key].trim()) return value[key].trim();
+  }
+  if (Array.isArray(value.content)) {
+    for (const item of value.content) {
+      const text = findTextValue(item);
+      if (text) return text;
+    }
+  }
+  for (const nested of Object.values(value)) {
+    if (nested && typeof nested === "object") {
+      const text = findTextValue(nested);
+      if (text) return text;
+    }
+  }
+  return "";
+};
+
+const shouldEmitTranscript = (event) => {
+  const type = String(event?.type || "");
+  return (
+    type.includes("transcription") ||
+    type.includes("translation") ||
+    type === "response.text.done" ||
+    type === "conversation.item.input_audio_transcription.completed"
+  );
+};
+
+const handleLiveAudioWebSocket = async (request, env) => {
+  if (request.headers.get("upgrade") !== "websocket") {
+    return json({ success: false, error: "WebSocket upgrade required." }, 426);
+  }
+  if (!env.DASHSCOPE_API_KEY) {
+    return json({ success: false, error: "DASHSCOPE_API_KEY environment variable is missing." }, 500);
+  }
+  if (typeof WebSocketPair !== "function") {
+    return json({ success: false, error: "WebSocket runtime is not available in this deployment." }, 501);
+  }
+
+  const pair = new WebSocketPair();
+  const [clientSocket, serverSocket] = Object.values(pair);
+  serverSocket.accept();
+
+  let qwenSocket = null;
+  let sessionId = \`session-\${Date.now()}\`;
+  let latestSeq = 0;
+
+  const sendClient = (payload) => {
+    try {
+      serverSocket.send(JSON.stringify(payload));
+    } catch {
+      // Client has already disconnected.
+    }
+  };
+
+  const qwenResponse = await fetch(buildRealtimeUrl(env), {
+    headers: {
+      "authorization": \`Bearer \${env.DASHSCOPE_API_KEY}\`,
+      "upgrade": "websocket"
+    }
+  });
+
+  if (qwenResponse.status !== 101 || !qwenResponse.webSocket) {
+    sendClient({ type: "error", message: \`Qwen realtime connection failed with HTTP \${qwenResponse.status}.\` });
+    serverSocket.close(1011, "Qwen realtime connection failed");
+    return new Response(null, { status: 101, webSocket: clientSocket });
+  }
+
+  qwenSocket = qwenResponse.webSocket;
+  qwenSocket.accept();
+  qwenSocket.send(JSON.stringify(buildRealtimeSessionUpdate()));
+  sendClient({
+    type: "ready",
+    sessionId,
+    model: env.QWEN_REALTIME_MODEL || "qwen3.5-livetranslate-flash-realtime"
+  });
+
+  qwenSocket.addEventListener("message", (event) => {
+    let payload;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (payload.type === "error") {
+      sendClient({
+        type: "error",
+        sessionId,
+        seq: latestSeq,
+        message: payload.error?.message || payload.message || "Qwen realtime error."
+      });
+      return;
+    }
+    if (!shouldEmitTranscript(payload)) return;
+    const text = findTextValue(payload);
+    if (!text) return;
+    sendClient({
+      type: "transcript",
+      sessionId,
+      seq: latestSeq,
+      textEn: text,
+      punctuatedText: text,
+      confidence: payload.confidence
+    });
+  });
+
+  qwenSocket.addEventListener("close", () => {
+    sendClient({ type: "closed", sessionId });
+    try {
+      serverSocket.close();
+    } catch {
+      // Ignore close races.
+    }
+  });
+
+  qwenSocket.addEventListener("error", () => {
+    sendClient({ type: "error", sessionId, seq: latestSeq, message: "Qwen realtime WebSocket error." });
+  });
+
+  serverSocket.addEventListener("message", (event) => {
+    let message;
+    try {
+      message = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (message?.type !== "audio_chunk") return;
+    sessionId = message.sessionId || sessionId;
+    latestSeq = typeof message.seq === "number" ? message.seq : latestSeq + 1;
+
+    if (!message.base64Audio) {
+      sendClient({ type: "error", sessionId, seq: latestSeq, message: "Empty audio chunk skipped." });
+      return;
+    }
+    if (!qwenSocket || qwenSocket.readyState !== 1) {
+      sendClient({ type: "error", sessionId, seq: latestSeq, message: "Qwen realtime connection is not ready." });
+      return;
+    }
+
+    qwenSocket.send(JSON.stringify({
+      event_id: \`audio-\${sessionId}-\${latestSeq}\`,
+      type: "input_audio_buffer.append",
+      audio: message.base64Audio
+    }));
+  });
+
+  serverSocket.addEventListener("close", () => {
+    if (qwenSocket && qwenSocket.readyState === 1) qwenSocket.close();
+  });
+
+  return new Response(null, { status: 101, webSocket: clientSocket });
 };
 
 const handlePreloadSyllabus = async (request, env) => {
@@ -407,6 +721,7 @@ export default {
         runtime: "sites-worker",
         chatModel: env.QWEN_CHAT_MODEL || "qwen3.7-plus",
         realtimeModel: env.QWEN_REALTIME_MODEL || "qwen3.5-livetranslate-flash-realtime",
+        audioHttpModel: env.QWEN_AUDIO_HTTP_MODEL || "qwen3-livetranslate-flash",
         qwenConfigured: Boolean(env.DASHSCOPE_API_KEY),
         time: new Date().toISOString()
       });
@@ -430,11 +745,23 @@ export default {
     if (request.method === "POST" && url.pathname === "/api/rescue-analysis") return handleRescueAnalysis(request, env);
     if (request.method === "POST" && url.pathname === "/api/generate-study-notes") return handleStudyNotes(request, env);
 
-    if (url.pathname === "/api/transcribe-audio") {
-      return json({
-        success: false,
-        error: "HTTP audio transcription fallback is not enabled in the Sites Worker deployment. Use the self-hosted Node server for realtime audio, or migrate /api/live-audio to a Worker WebSocket proxy."
-      }, 501);
+    if (request.method === "POST" && url.pathname === "/api/transcribe-audio") {
+      try {
+        const body = await readJson(request);
+        const text = await transcribeAudioWithQwen(env, body);
+        return json({
+          success: true,
+          text,
+          textEn: body.targetLang === "en" ? text : undefined,
+          translatedText: text
+        });
+      } catch (error) {
+        return apiError(error, "Failed to transcribe audio");
+      }
+    }
+
+    if (url.pathname === "/api/live-audio") {
+      return handleLiveAudioWebSocket(request, env);
     }
 
     if (url.pathname.startsWith("/api/")) {

@@ -80,10 +80,12 @@ Set your Qwen/DashScope API configuration in `.env`:
 ```env
 DASHSCOPE_API_KEY="your_dashscope_api_key"
 QWEN_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+QWEN_AUDIO_BASE_URL=""
 QWEN_REALTIME_WS_URL="wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 QWEN_CHAT_MODEL="qwen3.7-plus"
 QWEN_REALTIME_MODEL="qwen3.5-livetranslate-flash-realtime"
 QWEN_AUDIO_HTTP_MODEL="qwen3-livetranslate-flash"
+QWEN_HTTP_TIMEOUT_MS="45000"
 INVITE_CODE="CHANGE_ME"
 PORT="3000"
 APP_URL="http://localhost:3000"
@@ -145,7 +147,7 @@ All AI features are exposed through server-side routes so the Qwen/DashScope API
 | `POST` | `/api/analyze-chunk` | Analyze one lecture transcript segment |
 | `POST` | `/api/progressive-summary` | Generate a block-level Chinese lecture summary |
 | `POST` | `/api/rescue-analysis` | Explain a confusing lecture snippet in detail |
-| `POST` | `/api/transcribe-audio` | Compatibility placeholder for HTTP audio transcription fallback |
+| `POST` | `/api/transcribe-audio` | HTTP short-audio fallback through `qwen3-livetranslate-flash` streaming Chat Completions |
 | `POST` | `/api/generate-study-notes` | Generate Cornell notes, flashcards, and quiz questions |
 | `WS` | `/api/live-audio` | Proxy realtime PCM16 audio chunks to Qwen LiveTranslate |
 
@@ -166,6 +168,7 @@ All AI features are exposed through server-side routes so the Qwen/DashScope API
 - The current app stores transcript, glossary, rescue history, and generated notes in React state only. Refreshing the page clears the session.
 - `RemoteMicModal.tsx` is currently a UI prototype for a phone-based remote microphone flow and is not wired into the main workspace.
 - Realtime microphone input is captured with Web Audio, converted to 16kHz PCM16 in the browser, sent to this backend over WebSocket, then proxied to Qwen LiveTranslate. The API key is never exposed to browser code.
+- The HTTP short-audio fallback uses `qwen3-livetranslate-flash`, which Alibaba Cloud documents as an OpenAI-compatible streaming API that may require a workspace-specific `QWEN_AUDIO_BASE_URL`; keep it separate from the text endpoint when needed.
 - AI responses depend on Qwen/DashScope model availability and the configured `DASHSCOPE_API_KEY`.
 - The server currently listens on port `3000`.
 
@@ -175,10 +178,12 @@ All AI features are exposed through server-side routes so the Qwen/DashScope API
 | --- | --- | --- |
 | `DASHSCOPE_API_KEY` | Yes | Qwen/DashScope API key used by server-side AI routes |
 | `QWEN_BASE_URL` | No | OpenAI-compatible text API endpoint |
+| `QWEN_AUDIO_BASE_URL` | No | Optional dedicated OpenAI-compatible endpoint for `qwen3-livetranslate-flash` HTTP audio fallback |
 | `QWEN_REALTIME_WS_URL` | No | Qwen LiveTranslate realtime WebSocket endpoint |
 | `QWEN_CHAT_MODEL` | No | Text analysis model, defaults to `qwen3.7-plus` |
 | `QWEN_REALTIME_MODEL` | No | Realtime audio model, defaults to `qwen3.5-livetranslate-flash-realtime` |
-| `QWEN_AUDIO_HTTP_MODEL` | No | Reserved HTTP audio fallback model, defaults to `qwen3-livetranslate-flash` |
+| `QWEN_AUDIO_HTTP_MODEL` | No | HTTP audio fallback model, defaults to `qwen3-livetranslate-flash` |
+| `QWEN_HTTP_TIMEOUT_MS` | No | Server-side Qwen request timeout, defaults to `45000` |
 | `INVITE_CODE` | No | Optional self-hosted access gate value for future access control work |
 | `PORT` | No | Server port, defaults to `3000` |
 | `APP_URL` | No for local dev | Hosted app URL or local app URL |

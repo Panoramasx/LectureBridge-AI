@@ -16,6 +16,8 @@ const QWEN_REALTIME_WS_URL = process.env.QWEN_REALTIME_WS_URL || "wss://dashscop
 const QWEN_CHAT_MODEL = process.env.QWEN_CHAT_MODEL || "qwen3.7-plus";
 const QWEN_REALTIME_MODEL = process.env.QWEN_REALTIME_MODEL || "qwen3.5-livetranslate-flash-realtime";
 const QWEN_AUDIO_HTTP_MODEL = process.env.QWEN_AUDIO_HTTP_MODEL || "qwen3-livetranslate-flash";
+const QWEN_AUDIO_BASE_URL = process.env.QWEN_AUDIO_BASE_URL || QWEN_BASE_URL;
+const QWEN_HTTP_TIMEOUT_MS = Number(process.env.QWEN_HTTP_TIMEOUT_MS || 45000);
 
 app.use(express.json({ limit: "50mb" }));
 
@@ -57,11 +59,13 @@ const parseJson = (value: string, routeName: string) => {
   }
 };
 
-const qwenJson = async (routeName: string, prompt: string) => {
+const qwenJson = async (routeName: string, prompt: string, maxTokens = 1200) => {
   const client = getQwenClient();
   const response = await client.chat.completions.create({
     model: QWEN_CHAT_MODEL,
     temperature: 0.2,
+    max_tokens: maxTokens,
+    enable_thinking: false,
     response_format: { type: "json_object" },
     messages: [
       {
@@ -71,7 +75,7 @@ const qwenJson = async (routeName: string, prompt: string) => {
       },
       { role: "user", content: prompt },
     ],
-  });
+  } as any, { timeout: QWEN_HTTP_TIMEOUT_MS });
 
   const content = response.choices[0]?.message?.content;
   if (!content) {
@@ -79,6 +83,131 @@ const qwenJson = async (routeName: string, prompt: string) => {
   }
 
   return parseJson(content, routeName);
+};
+
+const getAudioFormat = (mimeType?: string, explicitFormat?: string) => {
+  const format = explicitFormat || mimeType?.split(";")[0]?.split("/")[1] || "wav";
+  if (format === "mpeg") return "mp3";
+  if (format === "x-wav") return "wav";
+  return format.toLowerCase();
+};
+
+const normalizeAudioData = (base64Audio?: string, audioUrl?: string, mimeType?: string) => {
+  const trimmedUrl = String(audioUrl || "").trim();
+  if (trimmedUrl) return trimmedUrl;
+
+  const trimmedAudio = String(base64Audio || "").trim();
+  if (!trimmedAudio) return "";
+  if (trimmedAudio.startsWith("data:") || /^https?:\/\//i.test(trimmedAudio)) return trimmedAudio;
+  return `data:${mimeType || "audio/wav"};base64,${trimmedAudio}`;
+};
+
+const extractTextFromCompletionChunk = (chunk: any) => {
+  const delta = chunk?.choices?.[0]?.delta;
+  return [
+    delta?.content,
+    delta?.audio?.transcript,
+    delta?.audio?.translation,
+    chunk?.output_text,
+    chunk?.text,
+  ]
+    .filter((value) => typeof value === "string")
+    .join("");
+};
+
+const parseSseJsonLine = (line: string) => {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return null;
+  const payload = trimmed.slice(5).trim();
+  if (!payload || payload === "[DONE]") return null;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+};
+
+const transcribeAudioWithQwen = async ({
+  base64Audio,
+  audioUrl,
+  mimeType,
+  format,
+  sourceLang = "en",
+  targetLang = "zh",
+}: {
+  base64Audio?: string;
+  audioUrl?: string;
+  mimeType?: string;
+  format?: string;
+  sourceLang?: string;
+  targetLang?: string;
+}) => {
+  const audioData = normalizeAudioData(base64Audio, audioUrl, mimeType);
+  if (!audioData) {
+    throw new Error("Audio data is required.");
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), QWEN_HTTP_TIMEOUT_MS);
+  try {
+    const baseUrl = QWEN_AUDIO_BASE_URL.replace(/\/$/, "");
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${getDashScopeApiKey()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: QWEN_AUDIO_HTTP_MODEL,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_audio",
+                input_audio: {
+                  data: audioData,
+                  format: getAudioFormat(mimeType, format),
+                },
+              },
+            ],
+          },
+        ],
+        modalities: ["text"],
+        stream: true,
+        stream_options: { include_usage: false },
+        translation_options: { source_lang: sourceLang, target_lang: targetLang },
+      }),
+    });
+
+    if (!response.ok) {
+      const payload = await response.text().catch(() => "");
+      throw new Error(payload || `Qwen audio transcription failed with HTTP ${response.status}.`);
+    }
+    if (!response.body) {
+      throw new Error("Qwen audio transcription returned an empty stream.");
+    }
+
+    let translatedText = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of response.body as any) {
+      const text = decoder.decode(chunk, { stream: true });
+      for (const line of text.split(/\r?\n/)) {
+        const payload = parseSseJsonLine(line);
+        if (!payload) continue;
+        translatedText += extractTextFromCompletionChunk(payload);
+      }
+    }
+
+    const finalText = translatedText.trim();
+    if (!finalText) {
+      throw new Error("Qwen audio transcription returned no text.");
+    }
+    return finalText;
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 const apiError = (res: express.Response, error: unknown, fallback: string) => {
@@ -162,6 +291,8 @@ app.get("/api/health", (_req, res) => {
     provider: "qwen",
     chatModel: QWEN_CHAT_MODEL,
     realtimeModel: QWEN_REALTIME_MODEL,
+    audioHttpModel: QWEN_AUDIO_HTTP_MODEL,
+    qwenConfigured: Boolean(process.env.DASHSCOPE_API_KEY),
     time: new Date().toISOString(),
   });
 });
@@ -205,9 +336,9 @@ Return JSON exactly in this shape:
   ]
 }
 
-Extract 8 to 15 high-value technical academic terms likely to appear in lectures.`;
+Extract 8 to 12 high-value terms only. Keep each definition concise.`;
 
-    const raw = await qwenJson("preload-syllabus", prompt);
+    const raw = await qwenJson("preload-syllabus", prompt, 900);
     res.json({ success: true, terms: normalizeTerms(raw) });
   } catch (error) {
     apiError(res, error, "Failed to extract syllabus terms");
@@ -322,15 +453,20 @@ Return JSON exactly in this shape:
 
 app.post("/api/transcribe-audio", async (req, res) => {
   try {
-    const { base64Audio } = req.body;
-    if (!base64Audio) {
+    const { base64Audio, audioUrl, mimeType, format, sourceLang, targetLang } = req.body;
+    if (!base64Audio && !audioUrl) {
       return res.status(400).json({ success: false, error: "Audio data is required." });
     }
 
-    res.status(501).json({
-      success: false,
-      error: `HTTP audio transcription fallback is reserved for ${QWEN_AUDIO_HTTP_MODEL}. Use WS /api/live-audio for the MVP realtime path.`,
+    const text = await transcribeAudioWithQwen({
+      base64Audio,
+      audioUrl,
+      mimeType,
+      format,
+      sourceLang,
+      targetLang,
     });
+    res.json({ success: true, text, textEn: targetLang === "en" ? text : undefined, translatedText: text });
   } catch (error) {
     apiError(res, error, "Failed to transcribe audio");
   }
@@ -395,6 +531,23 @@ const buildRealtimeUrl = () => {
   const separator = QWEN_REALTIME_WS_URL.includes("?") ? "&" : "?";
   return `${QWEN_REALTIME_WS_URL}${separator}model=${encodeURIComponent(QWEN_REALTIME_MODEL)}`;
 };
+
+const buildRealtimeSessionUpdate = () => ({
+  event_id: `session-${Date.now()}`,
+  type: "session.update",
+  session: {
+    modalities: ["text"],
+    sample_rate: 16000,
+    input_audio_format: "pcm",
+    input_audio_transcription: {
+      model: "qwen3-asr-flash-realtime",
+      language: "en",
+    },
+    translation: {
+      language: "zh",
+    },
+  },
+});
 
 const safeJson = (data: RawData) => {
   try {
@@ -466,15 +619,7 @@ const setupLiveAudioWebSocket = (server: http.Server) => {
     }
 
     qwenWs.on("open", () => {
-      qwenWs?.send(JSON.stringify({
-        type: "session.update",
-        session: {
-          modalities: ["text"],
-          input_audio_format: "pcm16",
-          instructions:
-            "Transcribe English university lecture audio accurately into punctuated English transcript text. Do not summarize.",
-        },
-      }));
+      qwenWs?.send(JSON.stringify(buildRealtimeSessionUpdate()));
       sendClient({ type: "ready", sessionId, model: QWEN_REALTIME_MODEL });
     });
 
@@ -532,8 +677,11 @@ const setupLiveAudioWebSocket = (server: http.Server) => {
         return;
       }
 
-      qwenWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: message.base64Audio }));
-      qwenWs.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+      qwenWs.send(JSON.stringify({
+        event_id: `audio-${sessionId}-${latestSeq}`,
+        type: "input_audio_buffer.append",
+        audio: message.base64Audio,
+      }));
     });
 
     clientWs.on("close", () => {
