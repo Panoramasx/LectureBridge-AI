@@ -374,6 +374,12 @@ const buildRealtimeUrl = (env) => {
   return \`\${baseUrl}\${separator}model=\${encodeURIComponent(model)}\`;
 };
 
+const buildRealtimeFetchUrl = (env) => {
+  return buildRealtimeUrl(env)
+    .replace(/^wss:\\/\\//i, "https://")
+    .replace(/^ws:\\/\\//i, "http://");
+};
+
 const buildRealtimeSessionUpdate = () => ({
   event_id: \`session-\${Date.now()}\`,
   type: "session.update",
@@ -449,12 +455,24 @@ const handleLiveAudioWebSocket = async (request, env) => {
     }
   };
 
-  const qwenResponse = await fetch(buildRealtimeUrl(env), {
-    headers: {
-      "authorization": \`Bearer \${env.DASHSCOPE_API_KEY}\`,
-      "upgrade": "websocket"
-    }
-  });
+  let qwenResponse;
+  try {
+    qwenResponse = await fetch(buildRealtimeFetchUrl(env), {
+      headers: {
+        "authorization": \`Bearer \${env.DASHSCOPE_API_KEY}\`,
+        "upgrade": "websocket"
+      }
+    });
+  } catch (error) {
+    sendClient({
+      type: "error",
+      sessionId,
+      seq: latestSeq,
+      message: error instanceof Error ? error.message : "Qwen realtime connection failed."
+    });
+    serverSocket.close(1011, "Qwen realtime connection failed");
+    return new Response(null, { status: 101, webSocket: clientSocket });
+  }
 
   if (qwenResponse.status !== 101 || !qwenResponse.webSocket) {
     sendClient({ type: "error", message: \`Qwen realtime connection failed with HTTP \${qwenResponse.status}.\` });
