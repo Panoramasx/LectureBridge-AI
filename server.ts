@@ -12,6 +12,7 @@ dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || "0.0.0.0";
 const QWEN_BASE_URL = process.env.QWEN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const QWEN_REALTIME_WS_URL = process.env.QWEN_REALTIME_WS_URL || "wss://dashscope.aliyuncs.com/api-ws/v1/realtime";
 const QWEN_CHAT_MODEL = process.env.QWEN_CHAT_MODEL || "qwen3.7-plus";
@@ -775,9 +776,9 @@ async function startServer() {
   const httpServer = http.createServer(app);
   setupLiveAudioWebSocket(httpServer);
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, HOST, () => {
     const mode = AUDIO_GATEWAY_ONLY ? "audio gateway" : "Qwen server";
-    console.log(`LectureBridge AI ${mode} running on http://0.0.0.0:${PORT}`);
+    console.log(`LectureBridge AI ${mode} running on http://${HOST}:${PORT}`);
   });
 }
 

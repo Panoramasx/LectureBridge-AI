@@ -509,6 +509,7 @@ AUDIO_GATEWAY_SHARED_SECRET="replace-with-a-long-random-secret"
 AUDIO_GATEWAY_ALLOW_DEV_NO_TOKEN="true"
 AUDIO_GATEWAY_ONLY="false"
 INVITE_CODE="CHANGE_ME"
+HOST="0.0.0.0"
 PORT="3000"
 APP_URL="http://localhost:3000"
 ```
@@ -530,6 +531,7 @@ APP_URL="http://localhost:3000"
 | `AUDIO_GATEWAY_ALLOW_DEV_NO_TOKEN` | 否 | `true` | 仅本地开发可免 token；生产模式不会启用。 |
 | `AUDIO_GATEWAY_ONLY` | 否 | `false` | `true` 时 Node 服务不加载 Vite/静态前端，仅作为音频 gateway。 |
 | `INVITE_CODE` | 否 | `CHANGE_ME` | 自托管访问门槛。为空或 `CHANGE_ME` 时不启用。 |
+| `HOST` | 否 | `0.0.0.0` | Node 监听地址。由同机反向代理转发时建议设为 `127.0.0.1`。 |
 | `PORT` | 否 | `3000` | Express 服务端口。 |
 | `APP_URL` | 否 | 无 | 部署地址标记，当前核心逻辑不强依赖。 |
 
@@ -737,6 +739,7 @@ NODE_ENV="production"
 AUDIO_GATEWAY_ONLY="true"
 AUDIO_GATEWAY_SHARED_SECRET="与 Sites 完全相同的长随机密钥"
 DASHSCOPE_API_KEY="your_dashscope_api_key"
+HOST="127.0.0.1"
 PORT="3000"
 ```
 
