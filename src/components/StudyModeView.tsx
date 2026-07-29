@@ -127,37 +127,34 @@ ${cornellNotes.detailedNotesMarkdown}
         <div className="space-y-6">
           
           {/* Sub-navigation tabs */}
-          <div className="study-tabs flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-black/40 p-2 rounded-2xl border border-white/10 backdrop-blur-md">
-            <div className="study-tab-list flex items-center gap-2">
+          <div className="study-tabs">
+            <div className="study-tab-list" role="tablist" aria-label="课后复习视图">
               <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "cornell"}
                 onClick={() => setActiveTab("cornell")}
-                className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === "cornell"
-                    ? "bg-indigo-600/90 text-white shadow border border-white/20"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
+                className={activeTab === "cornell" ? "study-tab is-active" : "study-tab"}
               >
                 康奈尔笔记 (Cornell Notes)
               </button>
 
               <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "flashcards"}
                 onClick={() => setActiveTab("flashcards")}
-                className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === "flashcards"
-                    ? "bg-indigo-600/90 text-white shadow border border-white/20"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
+                className={activeTab === "flashcards" ? "study-tab is-active" : "study-tab"}
               >
                 双语背词卡片 ({cornellNotes.flashcards.length})
               </button>
 
               <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "quiz"}
                 onClick={() => setActiveTab("quiz")}
-                className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === "quiz"
-                    ? "bg-indigo-600/90 text-white shadow border border-white/20"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
+                className={activeTab === "quiz" ? "study-tab is-active" : "study-tab"}
               >
                 课后自测题 ({cornellNotes.quiz.length})
               </button>
@@ -165,7 +162,7 @@ ${cornellNotes.detailedNotesMarkdown}
 
             <button
               onClick={handleCopyMarkdown}
-              className="px-3 py-1.5 bg-white/10 hover:bg-white/15 text-slate-200 rounded-xl border border-white/15 text-xs font-medium flex items-center space-x-1.5 transition-colors backdrop-blur-md"
+              className="study-copy-action"
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
               <span>{copied ? "已复制 Markdown" : "复制为 Markdown"}</span>

@@ -636,10 +636,10 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
         </div>
 
         {/* Right: Audio Input Controls */}
-        <div className="live-actions flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+        <div className="live-actions audio-control-group flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           
           {/* Audio Source Notice */}
-          <div className="hidden xl:flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-black/30 border border-white/10 text-[11px] text-slate-300">
+          <div className="audio-source-badge hidden xl:flex items-center space-x-1.5 px-2.5 py-1 text-[11px]">
             <Mic className="w-3.5 h-3.5 text-cyan-400" />
             <span>输入源: 本机麦克风 · {liveAudioStatus}</span>
           </div>
@@ -653,10 +653,10 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
                 setIsSimulating(true);
               }
             }}
-            className={`live-action-button px-4 py-2 rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 transition-all border ${
+            className={`live-action-button audio-action-secondary px-4 py-2 text-xs font-semibold flex items-center justify-center space-x-2 transition-all ${
               isSimulating
-                ? "bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-lg"
-                : "bg-white/10 hover:bg-white/15 text-slate-200 border-white/15 backdrop-blur-md"
+                ? "is-active"
+                : ""
             }`}
           >
             {isSimulating ? <Pause className="w-4 h-4 text-amber-400" /> : <Play className="w-4 h-4 text-emerald-400" />}
@@ -666,10 +666,10 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
           {/* Real Mic Toggle */}
           <button
             onClick={toggleRealMic}
-            className={`live-action-button px-5 py-2 rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 transition-all shadow-md ${
+            className={`live-action-button audio-action-primary px-5 py-2 text-xs font-semibold flex items-center justify-center space-x-2 transition-all ${
               isRecording
-                ? "bg-rose-600 hover:bg-rose-500 text-white rescue-glow animate-pulse border border-rose-400/30"
-                : "bg-indigo-600 hover:bg-indigo-500 text-white indigo-glow border border-indigo-400/30"
+                ? "is-recording animate-pulse"
+                : ""
             }`}
           >
             {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
@@ -773,25 +773,23 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
         <div className="lg:col-span-5 glass-card rounded-2xl p-5 flex flex-col shadow-2xl border border-white/12">
           
           {/* Sub-Tabs */}
-          <div className="flex items-center space-x-1 bg-black/40 p-1 rounded-xl border border-white/10 mb-4 backdrop-blur-md">
+          <div className="workspace-tabs" role="tablist" aria-label="课堂理解视图">
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeRightTab === "realtime"}
               onClick={() => setActiveRightTab("realtime")}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeRightTab === "realtime"
-                  ? "bg-indigo-600/90 text-white shadow-md border border-white/20"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
+              className={activeRightTab === "realtime" ? "workspace-tab is-active" : "workspace-tab"}
             >
               实时理解层
             </button>
 
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeRightTab === "summary"}
               onClick={() => setActiveRightTab("summary")}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all relative ${
-                activeRightTab === "summary"
-                  ? "bg-indigo-600/90 text-white shadow-md border border-white/20"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
+              className={activeRightTab === "summary" ? "workspace-tab is-active" : "workspace-tab"}
             >
               5分钟小结
               {progressiveSummaries.length > 0 && (
@@ -802,12 +800,11 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
             </button>
 
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeRightTab === "rescues"}
               onClick={() => setActiveRightTab("rescues")}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all relative ${
-                activeRightTab === "rescues"
-                  ? "bg-indigo-600/90 text-white shadow-md border border-white/20"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
+              className={activeRightTab === "rescues" ? "workspace-tab is-active" : "workspace-tab"}
             >
               救生圈历史
               {rescueRecords.length > 0 && (
@@ -953,17 +950,17 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
       </div>
 
       {/* Floating Action Button: Prominent "听力救生圈" (Rescue Button) */}
-      <div className="fixed bottom-8 right-8 z-30">
+      <div className="rescue-dock">
         <button
           onClick={() => handleTriggerRescue()}
-          className="group px-6 py-4 bg-gradient-to-r from-rose-600 via-red-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-bold rounded-full rescue-glow border border-white/30 flex items-center space-x-3 transition-all hover:scale-105 active:scale-95"
+          className="rescue-button group"
         >
-          <div className="p-1.5 bg-white/20 rounded-full animate-pulse">
+          <div className="rescue-button-icon animate-pulse">
             <LifeBuoy className="w-6 h-6 text-white" />
           </div>
           <div className="text-left">
-            <span className="block text-sm font-extrabold tracking-wide">听力救生圈 · 没听懂</span>
-            <span className="block text-[10px] font-normal text-rose-100/90">一键捕捉过去30秒 + 深度拆解</span>
+            <span className="rescue-button-title">听力救生圈 · 没听懂</span>
+            <span className="rescue-button-subtitle">捕捉过去 30 秒并深度拆解</span>
           </div>
         </button>
       </div>
