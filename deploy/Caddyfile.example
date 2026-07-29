@@ -1,0 +1,4 @@
+# Replace the domain and ports when deploying elsewhere.
+https://xuzujia.com:15324 {
+    reverse_proxy 127.0.0.1:10010
+}

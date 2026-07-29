@@ -709,6 +709,35 @@ curl -sS http://localhost:3000/api/transcribe-audio \
 
 ## 部署说明
 
+### 当前完整自托管实例
+
+当前生产实例已经完整部署在自有 Debian 12 服务器：
+
+```text
+用户入口: https://xuzujia.com:15324
+Caddy:    0.0.0.0:15324
+Node:     127.0.0.1:10010
+服务名:   lecturebridge-app.service
+目录:     /opt/lecturebridge-app/current
+环境文件: /etc/lecturebridge-app.env
+```
+
+该实例独立提供 React 静态资源、Express HTTP API、WebSocket 音频网关、Qwen
+文本调用和 Qwen 实时音频转接，不依赖开发电脑或 Sites。仓库中的
+`deploy/lecturebridge-app.service`、`deploy/Caddyfile.example` 和
+`deploy/production.env.example` 是可复现部署模板。
+
+升级现有实例时：
+
+1. 在本地运行 `npm run lint` 和 `npm run build`。
+2. 把 `dist`、`package.json` 和依赖上传到新的 release 目录。
+3. 将 `/opt/lecturebridge-app/current` 原子切换到新 release。
+4. 执行 `systemctl restart lecturebridge-app.service`。
+5. 验证 `/api/health`、文本 API 和真实 WebSocket 音频。
+
+只有 `15324` 需要公网入站。`10010` 仅监听回环地址，不需要在阿里云安全组中
+开放。旧的独立音频端口 `10086/10001` 已不再使用。
+
 ### 自托管 Node 推荐路径
 
 自托管是功能最完整的部署方式：

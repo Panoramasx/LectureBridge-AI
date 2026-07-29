@@ -1,0 +1,22 @@
+[Unit]
+Description=LectureBridge AI full application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/lecturebridge-app/current
+EnvironmentFile=/etc/lecturebridge-app.env
+ExecStart=/usr/bin/env node /opt/lecturebridge-app/current/dist/server.cjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/opt/lecturebridge-app
+
+[Install]
+WantedBy=multi-user.target
