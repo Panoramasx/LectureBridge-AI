@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ShieldAlert, X, Info } from "lucide-react";
+import { ShieldAlert, X } from "lucide-react";
 
 export const PrivacyBanner: React.FC = () => {
   const [isDismissed, setIsDismissed] = useState(false);
@@ -7,22 +7,24 @@ export const PrivacyBanner: React.FC = () => {
   if (isDismissed) return null;
 
   return (
-    <div className="bg-black/30 backdrop-blur-md border-b border-white/10 text-xs py-2 px-4 text-slate-300">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-        <div className="flex items-center space-x-2">
-          <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+    <aside className="privacy-banner" aria-label="学术合规与隐私提示">
+      <div className="privacy-banner-inner">
+        <div className="flex items-start sm:items-center gap-2">
+          <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 sm:mt-0" />
           <span>
-            <strong className="text-slate-100">学术合规与隐私提示:</strong> 本助手仅供中国留学生个人课堂学习辅助使用。原始音频流不上传公共服务器，AI 生成笔记仅供参考，请遵守各校 FERPA / 课堂录音政策。
+            <strong>隐私与课堂规范：</strong> 音频仅经自有服务器转接 AI，请遵守所在学校的课堂录音政策。
           </span>
         </div>
 
         <button
+          type="button"
+          aria-label="关闭隐私提示"
           onClick={() => setIsDismissed(true)}
-          className="text-slate-400 hover:text-white p-1 rounded transition-colors shrink-0 hover:bg-white/10"
+          className="icon-action banner-close"
         >
-          <X className="w-3.5 h-3.5" />
+          <X className="w-4 h-4" />
         </button>
       </div>
-    </div>
+    </aside>
   );
 };

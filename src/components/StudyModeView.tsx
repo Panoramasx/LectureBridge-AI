@@ -127,8 +127,8 @@ ${cornellNotes.detailedNotesMarkdown}
         <div className="space-y-6">
           
           {/* Sub-navigation tabs */}
-          <div className="flex items-center justify-between bg-black/40 p-2 rounded-2xl border border-white/10 backdrop-blur-md">
-            <div className="flex items-center space-x-2">
+          <div className="study-tabs flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-black/40 p-2 rounded-2xl border border-white/10 backdrop-blur-md">
+            <div className="study-tab-list flex items-center gap-2">
               <button
                 onClick={() => setActiveTab("cornell")}
                 className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
@@ -245,7 +245,7 @@ ${cornellNotes.detailedNotesMarkdown}
                       {cornellNotes.flashcards[currentFlashcardIndex]?.front}
                     </h3>
                     <span className="text-[11px] text-slate-400 block pt-4">
-                      👉 点击翻面查看中文释义
+                      点击卡片查看中文释义
                     </span>
                   </div>
                 ) : (
@@ -330,7 +330,7 @@ ${cornellNotes.detailedNotesMarkdown}
                           : "bg-rose-950/80 text-rose-300 border-rose-500/40"
                       }`}>
                         <span className="font-bold block mb-0.5">
-                          {userQuizAnswers[qIdx] === q.correctIndex ? "✅ 回答正确" : `❌ 解析 (正确答案: ${q.options[q.correctIndex]})`}:
+                          {userQuizAnswers[qIdx] === q.correctIndex ? "回答正确" : `答案解析（正确答案：${q.options[q.correctIndex]}）`}:
                         </span>
                         <p>{q.explanationZh}</p>
                       </div>

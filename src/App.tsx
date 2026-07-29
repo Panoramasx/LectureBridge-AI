@@ -213,7 +213,7 @@ export default function App() {
 
   if (!authChecked) {
     return (
-      <div className="min-h-screen bg-slate-950/80 text-slate-100 font-sans flex items-center justify-center relative">
+      <div className="app-shell min-h-dvh flex items-center justify-center relative">
         <div className="mesh-gradient" />
         <div className="glass-card rounded-2xl px-6 py-5 border border-white/12 text-sm text-slate-300">
           正在检查访问权限...
@@ -224,7 +224,7 @@ export default function App() {
 
   if (!isAuthorized) {
     return (
-      <div className="min-h-screen bg-slate-950/80 text-slate-100 font-sans flex items-center justify-center p-4 relative">
+      <div className="app-shell min-h-dvh flex items-center justify-center p-4 relative">
         <div className="mesh-gradient" />
         <form onSubmit={handleVerifyInviteCode} className="glass-card w-full max-w-sm rounded-2xl p-6 border border-white/12 shadow-2xl space-y-4">
           <div>
@@ -250,7 +250,8 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950/80 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white flex flex-col antialiased relative">
+    <div className="app-shell min-h-dvh selection:bg-indigo-500 selection:text-white flex flex-col antialiased relative">
+      <a href="#main-content" className="skip-link">跳到主要内容</a>
       {/* Mesh Gradient Background */}
       <div className="mesh-gradient" />
 
@@ -280,7 +281,7 @@ export default function App() {
       />
 
       {/* Main Content Workspace Views */}
-      <main className="flex-1 pb-20">
+      <main id="main-content" className="flex-1 pb-24 lg:pb-10" tabIndex={-1}>
         {currentView === "preheat" && (
           <PreheatView
             selectedCourse={selectedCourse}
@@ -316,7 +317,7 @@ export default function App() {
       </main>
 
       {/* App Footer */}
-      <footer className="bg-slate-900 border-t border-slate-800 py-6 text-center text-xs text-slate-500">
+      <footer className="app-footer py-6 text-center text-xs">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
           <span>LectureBridge AI · 中国留学生英语课堂双语降负与实时笔记智能体 V1.0</span>
           <span>Powered by Qwen3.7 & Qwen LiveTranslate server-side AI pipeline</span>

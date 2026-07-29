@@ -47,7 +47,7 @@ https://lecturebridge-ai.panorama-estrus.chatgpt.site
 | --- | --- | --- |
 | Frontend | React 19 + TypeScript | 单页应用、课堂工作台、状态管理 |
 | Build | Vite 6 | 前端开发服务器和生产构建 |
-| Styling | Tailwind CSS 4 + custom CSS | 深色玻璃态课堂 UI |
+| Styling | Tailwind CSS 4 + semantic custom CSS | Claymorphism + Vibrant Block-based 响应式界面 |
 | Icons | `lucide-react` | 导航、按钮、状态图标 |
 | Backend | Express 4 | 本地和自托管 API 服务 |
 | AI SDK | `openai` | 调用千问 OpenAI-compatible Chat Completions |
@@ -60,6 +60,8 @@ https://lecturebridge-ai.panorama-estrus.chatgpt.site
 ```text
 .
 ├── server.ts
+├── design-system/
+│   └── lecturebridge-ai/MASTER.md
 ├── scripts/
 │   └── create-sites-worker.mjs
 ├── src/
@@ -86,6 +88,17 @@ https://lecturebridge-ai.panorama-estrus.chatgpt.site
 ├── vite.config.ts
 └── README.md
 ```
+
+## UI/UX 设计与响应式策略
+
+界面采用 **Claymorphism + Vibrant & Block-based** 视觉体系。`src/index.css` 定义语义色彩、表面、边框、阴影、焦点和动效 token；`design-system/lecturebridge-ai/MASTER.md` 保存设计决策，便于后续页面保持一致。主色使用高对比靛蓝，珊瑚红、青绿和黄色仅承担状态与重点提示，避免课堂工具被单一色调淹没。
+
+- 桌面端使用顶部完整导航和双栏课堂工作区，适合同时阅读转录与中文理解层。
+- 平板端将主导航放到标题栏第二行，课堂内容自动改为单栏，避免压缩关键信息。
+- 手机端使用底部三段主导航，麦克风和模拟讲课操作纵向排列，并为底部安全区预留空间。
+- 交互控件最小触控尺寸为 `44px`；键盘焦点使用统一高对比焦点环。
+- 布局断点覆盖 `1180px`、`767px` 和 `380px`，并支持 `prefers-reduced-motion`。
+- 固定工具栏和移动端底部导航均保留内容补偿空间，防止遮挡正文或页脚。
 
 关键文件职责：
 

@@ -609,18 +609,18 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 space-y-6">
       
       {/* Top Controls Banner */}
-      <div className="glass-card rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl border border-white/10">
+      <div className="live-control-block glass-card rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl border border-white/10">
         
         {/* Left: Course Info & Live Status */}
-        <div className="flex items-center space-x-4">
+        <div className="live-meta flex items-center gap-3 sm:gap-4">
           <div className="p-3 bg-indigo-950/80 border border-indigo-500/30 rounded-xl shadow-inner">
             <Clock className="w-5 h-5 text-indigo-400" />
           </div>
           <div>
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-bold text-slate-100">{selectedCourse.code} Live Class</h2>
               <span className="px-2.5 py-0.5 rounded-full text-[10px] bg-white/10 text-slate-200 font-mono border border-white/10">
-                ⏱ {formatTimer(elapsedSeconds)}
+                {formatTimer(elapsedSeconds)}
               </span>
               {(isRecording || isSimulating) && (
                 <span className="flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 font-semibold active-glow animate-pulse">
@@ -636,7 +636,7 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
         </div>
 
         {/* Right: Audio Input Controls */}
-        <div className="flex flex-col sm:flex-row items-end sm:items-center space-y-2 sm:space-y-0 sm:space-x-3">
+        <div className="live-actions flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
           
           {/* Audio Source Notice */}
           <div className="hidden xl:flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-black/30 border border-white/10 text-[11px] text-slate-300">
@@ -653,7 +653,7 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
                 setIsSimulating(true);
               }
             }}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all border ${
+            className={`live-action-button px-4 py-2 rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 transition-all border ${
               isSimulating
                 ? "bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-lg"
                 : "bg-white/10 hover:bg-white/15 text-slate-200 border-white/15 backdrop-blur-md"
@@ -666,7 +666,7 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
           {/* Real Mic Toggle */}
           <button
             onClick={toggleRealMic}
-            className={`px-5 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all shadow-md ${
+            className={`live-action-button px-5 py-2 rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 transition-all shadow-md ${
               isRecording
                 ? "bg-rose-600 hover:bg-rose-500 text-white rescue-glow animate-pulse border border-rose-400/30"
                 : "bg-indigo-600 hover:bg-indigo-500 text-white indigo-glow border border-indigo-400/30"
@@ -688,12 +688,12 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
       )}
 
       {/* Main Dual-Column Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[620px]">
+      <div className="live-workspace-grid grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[620px]">
         
         {/* Left Column: Real-time Transcript Stream (7 Cols) */}
         <div className="lg:col-span-7 glass-card rounded-2xl p-5 flex flex-col shadow-2xl border border-white/12">
           
-          <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
+          <div className="transcript-heading flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-white/10 mb-4">
             <div className="flex items-center space-x-2">
               <Volume2 className="w-5 h-5 text-indigo-400" />
               <h3 className="font-bold text-slate-100 text-sm">
@@ -837,7 +837,7 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
                   {/* Context Bridge */}
                   {latestChunk.contextBridge && (
                     <div className="p-3 bg-black/40 border border-white/10 rounded-xl text-xs text-slate-300 backdrop-blur-md">
-                      <span className="font-bold text-cyan-400 block mb-1">🔗 上下文逻辑搭桥:</span>
+                      <span className="font-bold text-cyan-400 block mb-1">上下文逻辑搭桥：</span>
                       <p>{latestChunk.contextBridge}</p>
                     </div>
                   )}
