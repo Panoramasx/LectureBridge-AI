@@ -4,15 +4,41 @@ import { PreheatView } from "./components/PreheatView";
 import { LiveWorkspace } from "./components/LiveWorkspace";
 import { StudyModeView } from "./components/StudyModeView";
 import { PrivacyBanner } from "./components/PrivacyBanner";
+import { SessionToolbar } from "./components/SessionToolbar";
 import { PRESET_COURSES } from "./data/presetCourses";
+import {
+  deleteSession,
+  getActiveSessionId,
+  getSession,
+  listCourseSessions,
+  saveSession,
+  setActiveSessionId,
+} from "./lib/localDb";
+import { downloadTextFile, parseImportedSession, sessionToMarkdown } from "./lib/sessionTransfer";
 import {
   CoursePreset,
   GlossaryTerm,
   TranscriptChunk,
   ProgressiveSummary,
   RescueRecord,
-  CornellNotes
+  CornellNotes,
+  LectureSession,
 } from "./types";
+
+const makeSession = (course: CoursePreset): LectureSession => {
+  const now = new Date().toISOString();
+  return {
+    id: `session-${course.id}-${Date.now()}`,
+    courseId: course.id,
+    createdAt: now,
+    updatedAt: now,
+    glossary: course.initialGlossary,
+    transcripts: [],
+    progressiveSummaries: [],
+    rescueRecords: [],
+    cornellNotes: null,
+  };
+};
 
 export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
@@ -27,6 +53,31 @@ export default function App() {
   const [rescueRecords, setRescueRecords] = useState<RescueRecord[]>([]);
   const [cornellNotes, setCornellNotes] = useState<CornellNotes | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [sessionId, setSessionId] = useState("");
+  const [sessionCreatedAt, setSessionCreatedAt] = useState("");
+  const [sessionReady, setSessionReady] = useState(false);
+
+  const applySession = (session: LectureSession) => {
+    setSessionId(session.id);
+    setSessionCreatedAt(session.createdAt);
+    setGlossary(session.glossary);
+    setTranscripts(session.transcripts);
+    setProgressiveSummaries(session.progressiveSummaries);
+    setRescueRecords(session.rescueRecords);
+    setCornellNotes(session.cornellNotes);
+    setActiveSessionId(session.courseId, session.id);
+  };
+
+  const restoreCourseSession = async (course: CoursePreset) => {
+    setSessionReady(false);
+    const activeId = getActiveSessionId(course.id);
+    const active = activeId ? await getSession(activeId) : undefined;
+    const latest = active || (await listCourseSessions(course.id))[0];
+    const session = latest || makeSession(course);
+    if (!latest) await saveSession(session);
+    applySession(session);
+    setSessionReady(true);
+  };
 
   useEffect(() => {
     const verifyAccess = async () => {
@@ -56,6 +107,38 @@ export default function App() {
     verifyAccess();
   }, []);
 
+  useEffect(() => {
+    void restoreCourseSession(selectedCourse);
+  }, []);
+
+  useEffect(() => {
+    if (!sessionReady || !sessionId) return;
+    const timer = window.setTimeout(() => {
+      void saveSession({
+        id: sessionId,
+        courseId: selectedCourse.id,
+        createdAt: sessionCreatedAt,
+        updatedAt: new Date().toISOString(),
+        glossary,
+        transcripts,
+        progressiveSummaries,
+        rescueRecords,
+        cornellNotes,
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [
+    sessionReady,
+    sessionId,
+    sessionCreatedAt,
+    selectedCourse.id,
+    glossary,
+    transcripts,
+    progressiveSummaries,
+    rescueRecords,
+    cornellNotes,
+  ]);
+
   const handleVerifyInviteCode = async (event: React.FormEvent) => {
     event.preventDefault();
     setAuthError("");
@@ -80,19 +163,51 @@ export default function App() {
   // When course changes, update default glossary
   const handleSelectCourse = (course: CoursePreset) => {
     setSelectedCourse(course);
-    setGlossary(course.initialGlossary);
-    setTranscripts([]);
-    setProgressiveSummaries([]);
-    setRescueRecords([]);
-    setCornellNotes(null);
+    void restoreCourseSession(course);
   };
 
-  const handleClearSession = () => {
+  const handleNewSession = async () => {
+    if (isRecording) return;
+    const session = makeSession(selectedCourse);
+    await saveSession(session);
+    applySession(session);
+  };
+
+  const handleClearSession = async () => {
     if (window.confirm("确定清空本节课的实时转录与救生圈历史记录吗？(此操作无法撤销)")) {
-      setTranscripts([]);
-      setProgressiveSummaries([]);
-      setRescueRecords([]);
-      setCornellNotes(null);
+      await deleteSession(sessionId);
+      const session = makeSession(selectedCourse);
+      await saveSession(session);
+      applySession(session);
+    }
+  };
+
+  const currentSession = (): LectureSession => ({
+    id: sessionId,
+    courseId: selectedCourse.id,
+    createdAt: sessionCreatedAt,
+    updatedAt: new Date().toISOString(),
+    glossary,
+    transcripts,
+    progressiveSummaries,
+    rescueRecords,
+    cornellNotes,
+  });
+
+  const exportBaseName = `${selectedCourse.code}-${sessionCreatedAt.slice(0, 10) || "lecture"}`;
+
+  const handleImport = async (file: File) => {
+    try {
+      const imported = parseImportedSession(JSON.parse(await file.text()));
+      const course = PRESET_COURSES.find((item) => item.id === imported.courseId);
+      if (!course) throw new Error("备份中的课程不在当前课程列表中。");
+      const restored = { ...imported, id: `session-${course.id}-${Date.now()}` };
+      await saveSession(restored);
+      setSelectedCourse(course);
+      applySession(restored);
+      setSessionReady(true);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "导入失败。");
     }
   };
 
@@ -154,6 +269,14 @@ export default function App() {
         onClearSession={handleClearSession}
         termCount={glossary.length}
         rescueCount={rescueRecords.length}
+      />
+
+      <SessionToolbar
+        sessionLabel={sessionCreatedAt ? `当前课堂：${new Date(sessionCreatedAt).toLocaleString()} · 自动保存在本机` : "正在恢复课堂..."}
+        onNewSession={handleNewSession}
+        onExportMarkdown={() => downloadTextFile(`${exportBaseName}.md`, sessionToMarkdown(currentSession(), selectedCourse), "text/markdown;charset=utf-8")}
+        onExportJson={() => downloadTextFile(`${exportBaseName}.json`, JSON.stringify(currentSession(), null, 2), "application/json;charset=utf-8")}
+        onImportJson={handleImport}
       />
 
       {/* Main Content Workspace Views */}

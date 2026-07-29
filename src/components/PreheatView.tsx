@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { BookOpen, Sparkles, Plus, Check, FileText, ArrowRight, BookMarked, HelpCircle } from "lucide-react";
 import { GlossaryTerm, CoursePreset } from "../types";
+import { cachedPost } from "../lib/cachedApi";
 
 interface PreheatViewProps {
   selectedCourse: CoursePreset;
@@ -26,16 +27,10 @@ export const PreheatView: React.FC<PreheatViewProps> = ({
   const handlePreload = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch("/api/preload-syllabus", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await cachedPost<any>("/api/preload-syllabus", {
           courseTitle: selectedCourse.title,
           rawContent: syllabusInput,
-        }),
       });
-
-      const data = await response.json();
       if (data.success && Array.isArray(data.terms)) {
         const mappedTerms: GlossaryTerm[] = data.terms.map((t: any, index: number) => ({
           id: `extracted-${Date.now()}-${index}`,

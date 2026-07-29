@@ -89,6 +89,42 @@ const asString = (value, fallback = "") => typeof value === "string" ? value : f
 const asNumber = (value, fallback) => typeof value === "number" ? value : fallback;
 const qwenTimeoutMs = (env) => Number(env.QWEN_HTTP_TIMEOUT_MS || 45000);
 
+const encodeBase64Url = (value) => {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
+};
+
+const signGatewayPayload = async (secret, payload) => {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)));
+  let binary = "";
+  signature.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
+};
+
+const createGatewayToken = async (env, sessionId) => {
+  const secret = String(env.AUDIO_GATEWAY_SHARED_SECRET || "");
+  if (!secret) {
+    const error = new Error("AUDIO_GATEWAY_SHARED_SECRET environment variable is missing.");
+    error.status = 500;
+    throw error;
+  }
+  const payload = encodeBase64Url(JSON.stringify({
+    sessionId,
+    exp: Math.floor(Date.now() / 1000) + 120,
+    nonce: crypto.randomUUID()
+  }));
+  return payload + "." + await signGatewayPayload(secret, payload);
+};
+
 const stripJsonFences = (value) =>
   String(value || "")
     .trim()
@@ -743,6 +779,25 @@ export default {
         qwenConfigured: Boolean(env.DASHSCOPE_API_KEY),
         time: new Date().toISOString()
       });
+    }
+
+    if (url.pathname === "/api/client-config" && request.method === "GET") {
+      return json({
+        audioGatewayUrl: env.PUBLIC_AUDIO_GATEWAY_URL || "",
+        liveAudioMode: env.LIVE_AUDIO_MODE || "gateway-first",
+        httpAudioFallback: env.HTTP_AUDIO_FALLBACK !== "false",
+        gatewayTokenEndpoint: "/api/live-audio-token"
+      });
+    }
+
+    if (url.pathname === "/api/live-audio-token" && request.method === "POST") {
+      try {
+        const body = await readJson(request);
+        const sessionId = String(body.sessionId || "session-" + Date.now());
+        return json({ success: true, token: await createGatewayToken(env, sessionId), expiresIn: 120 });
+      } catch (error) {
+        return apiError(error, "Failed to authorize live audio");
+      }
     }
 
     if (url.pathname === "/api/auth/verify" && request.method === "POST") {

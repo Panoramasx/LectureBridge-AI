@@ -92,3 +92,22 @@ export interface CoursePreset {
     }[];
   }[];
 }
+
+export interface LectureSession {
+  id: string;
+  courseId: string;
+  createdAt: string;
+  updatedAt: string;
+  glossary: GlossaryTerm[];
+  transcripts: TranscriptChunk[];
+  progressiveSummaries: ProgressiveSummary[];
+  rescueRecords: RescueRecord[];
+  cornellNotes: CornellNotes | null;
+}
+
+export interface ClientConfig {
+  audioGatewayUrl: string;
+  liveAudioMode: "gateway-first" | "http-only" | "disabled";
+  httpAudioFallback: boolean;
+  gatewayTokenEndpoint: string;
+}

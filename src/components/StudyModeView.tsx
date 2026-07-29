@@ -4,6 +4,7 @@ import {
   Layers, Check, ChevronRight, Copy
 } from "lucide-react";
 import { CoursePreset, TranscriptChunk, CornellNotes } from "../types";
+import { cachedPost } from "../lib/cachedApi";
 
 interface StudyModeViewProps {
   selectedCourse: CoursePreset;
@@ -34,16 +35,10 @@ export const StudyModeView: React.FC<StudyModeViewProps> = ({
         ? transcripts.map((t) => t.textEn).join("\n")
         : selectedCourse.simulatedAudioScript.map((s) => s.textEn).join("\n");
 
-      const res = await fetch("/api/generate-study-notes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await cachedPost<any>("/api/generate-study-notes", {
           fullTranscripts: fullText,
           courseTitle: selectedCourse.title,
-        }),
       });
-
-      const data = await res.json();
       if (data.success && data.notesData) {
         setCornellNotes(data.notesData);
       }

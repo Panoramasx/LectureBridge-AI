@@ -2,6 +2,7 @@ import express from "express";
 import http from "http";
 import path from "path";
 import dotenv from "dotenv";
+import crypto from "crypto";
 import OpenAI from "openai";
 import { createServer as createViteServer } from "vite";
 import { WebSocket, WebSocketServer } from "ws";
@@ -18,8 +19,49 @@ const QWEN_REALTIME_MODEL = process.env.QWEN_REALTIME_MODEL || "qwen3.5-livetran
 const QWEN_AUDIO_HTTP_MODEL = process.env.QWEN_AUDIO_HTTP_MODEL || "qwen3-livetranslate-flash";
 const QWEN_AUDIO_BASE_URL = process.env.QWEN_AUDIO_BASE_URL || QWEN_BASE_URL;
 const QWEN_HTTP_TIMEOUT_MS = Number(process.env.QWEN_HTTP_TIMEOUT_MS || 45000);
+const PUBLIC_AUDIO_GATEWAY_URL = process.env.PUBLIC_AUDIO_GATEWAY_URL || "";
+const LIVE_AUDIO_MODE = process.env.LIVE_AUDIO_MODE || "gateway-first";
+const AUDIO_GATEWAY_SHARED_SECRET = process.env.AUDIO_GATEWAY_SHARED_SECRET || "";
+const AUDIO_GATEWAY_ONLY = process.env.AUDIO_GATEWAY_ONLY === "true";
+const AUDIO_GATEWAY_ALLOW_DEV_NO_TOKEN =
+  process.env.NODE_ENV !== "production" && process.env.AUDIO_GATEWAY_ALLOW_DEV_NO_TOKEN !== "false";
 
 app.use(express.json({ limit: "50mb" }));
+
+const base64Url = (value: string) => Buffer.from(value).toString("base64url");
+const signGatewayPayload = (payload: string) =>
+  crypto.createHmac("sha256", AUDIO_GATEWAY_SHARED_SECRET).update(payload).digest("base64url");
+
+const createGatewayToken = (sessionId: string) => {
+  if (!AUDIO_GATEWAY_SHARED_SECRET) {
+    if (AUDIO_GATEWAY_ALLOW_DEV_NO_TOKEN) return "";
+    throw new ConfigurationError("AUDIO_GATEWAY_SHARED_SECRET environment variable is missing.");
+  }
+  const payload = base64Url(JSON.stringify({
+    sessionId,
+    exp: Math.floor(Date.now() / 1000) + 120,
+    nonce: crypto.randomBytes(12).toString("base64url"),
+  }));
+  return `${payload}.${signGatewayPayload(payload)}`;
+};
+
+const verifyGatewayToken = (token: string) => {
+  if (!AUDIO_GATEWAY_SHARED_SECRET) return AUDIO_GATEWAY_ALLOW_DEV_NO_TOKEN;
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature) return false;
+  const expected = signGatewayPayload(payload);
+  const receivedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (receivedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(receivedBuffer, expectedBuffer)) {
+    return false;
+  }
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return typeof decoded.exp === "number" && decoded.exp >= Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
+};
 
 class ConfigurationError extends Error {
   constructor(message: string) {
@@ -307,6 +349,24 @@ app.post("/api/auth/verify", (req, res) => {
   res.json({ success: providedCode === configuredCode, accessRequired: true });
 });
 
+app.get("/api/client-config", (_req, res) => {
+  res.json({
+    audioGatewayUrl: PUBLIC_AUDIO_GATEWAY_URL,
+    liveAudioMode: LIVE_AUDIO_MODE,
+    httpAudioFallback: process.env.HTTP_AUDIO_FALLBACK !== "false",
+    gatewayTokenEndpoint: "/api/live-audio-token",
+  });
+});
+
+app.post("/api/live-audio-token", (req, res) => {
+  try {
+    const sessionId = String(req.body?.sessionId || `session-${Date.now()}`);
+    res.json({ success: true, token: createGatewayToken(sessionId), expiresIn: 120 });
+  } catch (error) {
+    apiError(res, error, "Failed to authorize live audio");
+  }
+});
+
 app.post("/api/preload-syllabus", async (req, res) => {
   try {
     const { courseTitle, rawContent } = req.body;
@@ -591,7 +651,12 @@ const shouldEmitTranscript = (event: any) => {
 const setupLiveAudioWebSocket = (server: http.Server) => {
   const wss = new WebSocketServer({ server, path: "/api/live-audio" });
 
-  wss.on("connection", (clientWs) => {
+  wss.on("connection", (clientWs, request) => {
+    const requestUrl = new URL(request.url || "/api/live-audio", `http://${request.headers.host || "localhost"}`);
+    if (!verifyGatewayToken(requestUrl.searchParams.get("token") || "")) {
+      clientWs.close(1008, "Invalid or expired gateway token");
+      return;
+    }
     let qwenWs: WebSocket | null = null;
     let latestSeq = 0;
     let sessionId = `session-${Date.now()}`;
@@ -693,13 +758,13 @@ const setupLiveAudioWebSocket = (server: http.Server) => {
 };
 
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
+  if (!AUDIO_GATEWAY_ONLY && process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (!AUDIO_GATEWAY_ONLY) {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (_req, res) => {
@@ -711,7 +776,8 @@ async function startServer() {
   setupLiveAudioWebSocket(httpServer);
 
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`LectureBridge AI Qwen server running on http://0.0.0.0:${PORT}`);
+    const mode = AUDIO_GATEWAY_ONLY ? "audio gateway" : "Qwen server";
+    console.log(`LectureBridge AI ${mode} running on http://0.0.0.0:${PORT}`);
   });
 }
 

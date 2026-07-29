@@ -11,6 +11,8 @@ import {
   RescueRecord
 } from "../types";
 import { RescueModal } from "./RescueModal";
+import { cachedPost } from "../lib/cachedApi";
+import type { ClientConfig } from "../types";
 
 interface LiveWorkspaceProps {
   selectedCourse: CoursePreset;
@@ -47,6 +49,12 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [liveAudioStatus, setLiveAudioStatus] = useState("待机");
   const [liveAudioError, setLiveAudioError] = useState("");
+  const [clientConfig, setClientConfig] = useState<ClientConfig>({
+    audioGatewayUrl: "",
+    liveAudioMode: "gateway-first",
+    httpAudioFallback: true,
+    gatewayTokenEndpoint: "/api/live-audio-token",
+  });
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -60,10 +68,20 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
   const audioSeqRef = useRef(0);
   const sessionIdRef = useRef(`live-${Date.now()}`);
   const lastTranscriptRef = useRef("");
+  const pendingAudioRef = useRef<Int16Array[]>([]);
+  const recordingIntentRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
   const elapsedSecondsRef = useRef(0);
   const scrollEndRef = useRef<HTMLDivElement | null>(null);
 
   // Live timer
+  useEffect(() => {
+    fetch("/api/client-config")
+      .then((response) => response.json())
+      .then((data) => setClientConfig(data))
+      .catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (isRecording || isSimulating) {
@@ -99,16 +117,11 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
           
           // Call API to get real-time AI chunk analysis
           try {
-            const res = await fetch("/api/analyze-chunk", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
+            const data = await cachedPost<any>("/api/analyze-chunk", {
                 transcriptChunk: item.textEn,
                 courseTitle: selectedCourse.title,
                 activeGlossary: glossary,
-              }),
             });
-            const data = await res.json();
             
             const newChunk: TranscriptChunk = {
               id: `chunk-${Date.now()}`,
@@ -257,7 +270,10 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     }
 
     const socket = liveAudioWsRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      pendingAudioRef.current = [...pendingAudioRef.current.slice(-4), pcm];
+      return;
+    }
 
     audioSeqRef.current += 1;
     socket.send(JSON.stringify({
@@ -297,16 +313,11 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     lastTranscriptRef.current = transcriptText;
 
     try {
-      const analyzeRes = await fetch("/api/analyze-chunk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const analyzeData = await cachedPost<any>("/api/analyze-chunk", {
           transcriptChunk: transcriptText,
           courseTitle: selectedCourse.title,
           activeGlossary: glossary,
-        }),
       });
-      const analyzeData = await analyzeRes.json();
       const seconds = elapsedSecondsRef.current;
 
       const newChunk: TranscriptChunk = {
@@ -325,9 +336,24 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     }
   };
 
-  const connectLiveAudioSocket = () => {
+  const connectLiveAudioSocket = async () => {
+    if (clientConfig.liveAudioMode === "disabled" || clientConfig.liveAudioMode === "http-only") {
+      throw new Error("Realtime gateway is disabled.");
+    }
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(`${protocol}://${window.location.host}/api/live-audio`);
+    const gatewayBase = clientConfig.audioGatewayUrl.trim() || `${protocol}://${window.location.host}`;
+    const tokenResponse = await fetch(clientConfig.gatewayTokenEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: sessionIdRef.current }),
+    });
+    const tokenData = await tokenResponse.json();
+    if (!tokenResponse.ok || tokenData.success === false) {
+      throw new Error(tokenData.error || "Unable to authorize realtime audio.");
+    }
+    const socketUrl = new URL("/api/live-audio", gatewayBase);
+    if (tokenData.token) socketUrl.searchParams.set("token", tokenData.token);
+    const socket = new WebSocket(socketUrl);
     let settled = false;
 
     socket.onmessage = (event) => {
@@ -337,7 +363,11 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
           analyzeAndAppendTranscript(data.punctuatedText || data.textEn);
         }
         if (data.type === "ready") {
-          setLiveAudioStatus("WebSocket 实时转写中");
+          reconnectAttemptsRef.current = 0;
+          setLiveAudioStatus(clientConfig.audioGatewayUrl ? "外置网关实时转写中" : "WebSocket 实时转写中");
+          const pending = pendingAudioRef.current;
+          pendingAudioRef.current = [];
+          pending.forEach(sendPcmChunk);
         }
         if (data.type === "error") {
           setLiveAudioError(data.message || "Live audio error.");
@@ -348,13 +378,27 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
       }
     };
 
-    socket.onerror = (event) => {
-      setLiveAudioError("WebSocket audio channel failed. Falling back when possible.");
-      console.error("Live audio socket error:", event);
-    };
-
     socket.onclose = () => {
-      setIsRecording(false);
+      if (!recordingIntentRef.current) return;
+      if (reconnectAttemptsRef.current < 2) {
+        reconnectAttemptsRef.current += 1;
+        setLiveAudioStatus(`实时通道重连中 (${reconnectAttemptsRef.current}/2)`);
+        window.setTimeout(async () => {
+          try {
+            const nextSocket = await connectLiveAudioSocket();
+            liveAudioWsRef.current = nextSocket;
+          } catch {
+            if (reconnectAttemptsRef.current >= 2 && clientConfig.httpAudioFallback) {
+              liveAudioModeRef.current = "http";
+              setLiveAudioStatus("HTTP 分片转写中");
+              setLiveAudioError("实时网关暂不可用，已自动切换为 HTTP 分片转写。");
+            }
+          }
+        }, 800 * reconnectAttemptsRef.current);
+      } else if (clientConfig.httpAudioFallback) {
+        liveAudioModeRef.current = "http";
+        setLiveAudioStatus("HTTP 分片转写中");
+      }
     };
 
     return new Promise<WebSocket>((resolve, reject) => {
@@ -381,6 +425,7 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
   };
 
   const stopRealtimeMicSession = () => {
+    recordingIntentRef.current = false;
     flushQueuedAudio();
 
     audioProcessorRef.current?.disconnect();
@@ -403,6 +448,8 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     liveAudioModeRef.current = null;
     pcmQueueRef.current = [];
     queuedSampleCountRef.current = 0;
+    pendingAudioRef.current = [];
+    reconnectAttemptsRef.current = 0;
     setLiveAudioStatus("待机");
   };
 
@@ -414,9 +461,11 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     } else {
       try {
         setLiveAudioError("");
-        setLiveAudioStatus("连接千问实时通道中");
+        recordingIntentRef.current = true;
+        setLiveAudioStatus(clientConfig.audioGatewayUrl ? "连接实时音频网关中" : "连接千问实时通道中");
 
         const socket = await connectLiveAudioSocket().catch((err) => {
+          if (!clientConfig.httpAudioFallback) throw err;
           console.warn("Live WebSocket unavailable, using HTTP fallback:", err);
           setLiveAudioError("实时 WebSocket 不可用，已切换为 HTTP 分片转写。");
           setLiveAudioStatus("HTTP 分片转写准备中");
@@ -463,16 +512,11 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     if (transcripts.length === 0) return;
     try {
       const recentText = transcripts.slice(-5).map((t) => t.textEn);
-      const res = await fetch("/api/progressive-summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await cachedPost<any>("/api/progressive-summary", {
           transcripts: recentText,
           courseTitle: selectedCourse.title,
           minuteBlock: progressiveSummaries.length + 1,
-        }),
       });
-      const data = await res.json();
       if (data.success && data.summary) {
         const newSummary: ProgressiveSummary = {
           id: `summary-${Date.now()}`,

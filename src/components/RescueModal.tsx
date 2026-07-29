@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { LifeBuoy, X, Sparkles, MessageCircle, AlertCircle, HelpCircle, ArrowRight, CheckCircle2 } from "lucide-react";
 import { RescueRecord } from "../types";
+import { cachedPost } from "../lib/cachedApi";
 
 interface RescueModalProps {
   isOpen: boolean;
@@ -33,17 +34,11 @@ export const RescueModal: React.FC<RescueModalProps> = ({
   const handleRescueAnalysis = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch("/api/rescue-analysis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await cachedPost<any>("/api/rescue-analysis", {
           snippetText,
           timestamp,
           courseTitle,
-        }),
       });
-
-      const data = await response.json();
       if (data.success && data.rescueData) {
         setRescueData(data.rescueData);
         
