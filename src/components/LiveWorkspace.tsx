@@ -73,6 +73,24 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
   const reconnectAttemptsRef = useRef(0);
   const elapsedSecondsRef = useRef(0);
   const scrollEndRef = useRef<HTMLDivElement | null>(null);
+  const lastAutoSummaryChunkCountRef = useRef(0);
+
+  useEffect(() => {
+    setIsSimulating(false);
+    setSimulationIndex(0);
+    lastAutoSummaryChunkCountRef.current = 0;
+    setTranscripts((previous) =>
+      previous.filter((chunk, index) => {
+        if (index === 0) return true;
+        const prior = previous[index - 1];
+        return !(
+          chunk.timestamp === prior.timestamp &&
+          chunk.seconds === prior.seconds &&
+          chunk.textEn.trim() === prior.textEn.trim()
+        );
+      }),
+    );
+  }, [selectedCourse.id, setTranscripts]);
 
   // Live timer
   useEffect(() => {
@@ -107,50 +125,61 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     scrollEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcripts]);
 
-  // Handle Simulated Lecture Stream
+  // Schedule the next simulated chunk only after the current analysis finishes.
   useEffect(() => {
-    let simInterval: NodeJS.Timeout;
-    if (isSimulating) {
-      simInterval = setInterval(async () => {
-        if (simulationIndex < selectedCourse.simulatedAudioScript.length) {
-          const item = selectedCourse.simulatedAudioScript[simulationIndex];
-          
-          // Call API to get real-time AI chunk analysis
-          try {
-            const data = await cachedPost<any>("/api/analyze-chunk", {
-                transcriptChunk: item.textEn,
-                courseTitle: selectedCourse.title,
-                activeGlossary: glossary,
-            });
-            
-            const newChunk: TranscriptChunk = {
-              id: `chunk-${Date.now()}`,
-              timestamp: item.timestamp,
-              seconds: item.seconds,
-              textEn: item.textEn,
-              chineseSummary: data.success ? data.analysis.chineseSummary : item.chineseSummary,
-              difficulty: data.success ? data.analysis.difficulty : item.difficulty,
-              contextBridge: data.success ? data.analysis.contextBridge : "",
-              detectedTerms: data.success ? data.analysis.detectedTerms : item.detectedTerms,
-            };
+    if (!isSimulating) return;
+    if (simulationIndex >= selectedCourse.simulatedAudioScript.length) {
+      setIsSimulating(false);
+      return;
+    }
 
-            setTranscripts((prev) => [...prev, newChunk]);
-            setSimulationIndex((idx) => idx + 1);
+    let cancelled = false;
+    const timeout = window.setTimeout(async () => {
+      const item = selectedCourse.simulatedAudioScript[simulationIndex];
+      try {
+        const data = await cachedPost<any>("/api/analyze-chunk", {
+          transcriptChunk: item.textEn,
+          courseTitle: selectedCourse.title,
+          activeGlossary: glossary,
+        });
+        if (cancelled) return;
 
-            // Auto trigger 5-minute summary if chunk count reaches multiples
-            if ((transcripts.length + 1) % 4 === 0) {
-              triggerProgressiveSummary();
-            }
-          } catch (e) {
-            console.error("Analysis failed:", e);
-          }
-        } else {
+        const chunkId = `sim-${selectedCourse.id}-${simulationIndex}`;
+        const newChunk: TranscriptChunk = {
+          id: chunkId,
+          timestamp: item.timestamp,
+          seconds: item.seconds,
+          textEn: item.textEn,
+          chineseSummary: data.success ? data.analysis.chineseSummary : item.chineseSummary,
+          difficulty: data.success ? data.analysis.difficulty : item.difficulty,
+          contextBridge: data.success ? data.analysis.contextBridge : "",
+          detectedTerms: data.success ? data.analysis.detectedTerms : item.detectedTerms,
+        };
+
+        setTranscripts((previous) => {
+          const alreadyAdded = previous.some(
+            (chunk) =>
+              chunk.id === chunkId ||
+              (chunk.timestamp === item.timestamp &&
+                chunk.seconds === item.seconds &&
+                chunk.textEn.trim() === item.textEn.trim()),
+          );
+          return alreadyAdded ? previous : [...previous, newChunk];
+        });
+        setSimulationIndex((current) => (current === simulationIndex ? current + 1 : current));
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Analysis failed:", error);
           setIsSimulating(false);
         }
-      }, 5000); // Send chunk every 5 seconds
-    }
-    return () => clearInterval(simInterval);
-  }, [isSimulating, simulationIndex, selectedCourse, glossary, transcripts]);
+      }
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [glossary, isSimulating, selectedCourse, setTranscripts, simulationIndex]);
 
   const downsampleTo16BitPCM = (input: Float32Array, inputSampleRate: number, outputSampleRate = 16000) => {
     if (inputSampleRate === outputSampleRate) {
@@ -541,6 +570,20 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     }
   };
 
+  useEffect(() => {
+    const chunkCount = transcripts.length;
+    if (
+      !isSimulating ||
+      chunkCount === 0 ||
+      chunkCount % 4 !== 0 ||
+      lastAutoSummaryChunkCountRef.current === chunkCount
+    ) {
+      return;
+    }
+    lastAutoSummaryChunkCountRef.current = chunkCount;
+    void triggerProgressiveSummary();
+  }, [isSimulating, transcripts.length]);
+
   // Trigger Rescue Modal for specific or recent snippet
   const handleTriggerRescue = (snippet?: string, time?: string) => {
     const textToRescue = snippet || (transcripts.length > 0 ? transcripts[transcripts.length - 1].textEn : "The professor explained the macroeconomic volatility model.");
@@ -650,6 +693,9 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
               if (isSimulating) {
                 setIsSimulating(false);
               } else {
+                if (simulationIndex >= selectedCourse.simulatedAudioScript.length) {
+                  setSimulationIndex(0);
+                }
                 setIsSimulating(true);
               }
             }}
@@ -741,11 +787,15 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
                     </div>
 
                     <button
+                      type="button"
                       onClick={() => handleTriggerRescue(chunk.textEn, chunk.timestamp)}
-                      className="opacity-90 group-hover:opacity-100 px-2.5 py-1 bg-rose-950/90 hover:bg-rose-900 text-rose-300 rounded-lg text-[11px] font-medium border border-rose-700/60 flex items-center space-x-1 transition-all rescue-glow"
+                      className="sentence-rescue-action"
+                      aria-label={`拆解 ${chunk.timestamp} 的句子`}
                     >
-                      <LifeBuoy className="w-3 h-3 text-rose-400" />
-                      <span>拆解这句</span>
+                      <span className="sentence-rescue-chip">
+                        <LifeBuoy className="w-3.5 h-3.5" />
+                        <span>拆解这句</span>
+                      </span>
                     </button>
                   </div>
 
@@ -870,13 +920,14 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
           {/* TAB 2: 5-Minute Progressive Summaries */}
           {activeRightTab === "summary" && (
             <div className="space-y-4 flex-1 overflow-y-auto pr-1">
-              <div className="flex items-center justify-between mb-2">
+              <div className="summary-toolbar">
                 <span className="text-xs text-slate-400">系统每 5 分钟自动归纳中文逻辑小结</span>
                 <button
+                  type="button"
                   onClick={triggerProgressiveSummary}
-                  className="text-xs px-2.5 py-1 bg-indigo-950/90 hover:bg-indigo-900 text-indigo-300 rounded-lg border border-indigo-700/50 flex items-center space-x-1"
+                  className="summary-action-button"
                 >
-                  <RefreshCw className="w-3 h-3" />
+                  <RefreshCw className="w-3.5 h-3.5" />
                   <span>手动生成小结</span>
                 </button>
               </div>

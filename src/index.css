@@ -125,6 +125,18 @@ button:active {
   box-shadow: var(--lb-shadow-small);
 }
 
+.app-header .course-picker,
+.app-header .desktop-nav,
+.app-header .header-actions {
+  height: 54px;
+}
+
+.app-header .record-status,
+.app-header .header-actions .icon-action {
+  height: 54px;
+  min-height: 54px;
+}
+
 .brand-lockup {
   min-width: 0;
   display: flex;
@@ -756,6 +768,74 @@ button:active {
   opacity: 0.92;
 }
 
+.summary-toolbar {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.summary-action-button {
+  min-height: 44px;
+  flex: none;
+  padding: 7px 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--lb-primary-deep);
+  background: #fff;
+  border: 1px solid #cfd6ee;
+  border-radius: 10px;
+  box-shadow: 0 2px 4px rgba(55, 48, 163, 0.1);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.summary-action-button:hover {
+  color: white;
+  background: var(--lb-primary);
+  border-color: #928dff;
+}
+
+.sentence-rescue-action {
+  min-width: 94px;
+  min-height: 44px;
+  padding: 5px 0 5px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: #b42351;
+  background: transparent;
+  border: 0;
+}
+
+.sentence-rescue-chip {
+  min-height: 32px;
+  padding: 5px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #fff0f4;
+  border: 1px solid #f4a8bd;
+  border-radius: 9px;
+  box-shadow: 0 2px 3px rgba(159, 18, 57, 0.1);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.sentence-rescue-action:hover .sentence-rescue-chip {
+  color: white;
+  background: #c72555;
+  border-color: #c72555;
+}
+
+.sentence-rescue-action:active {
+  transform: none;
+}
+
 .rescue-glow {
   box-shadow: 4px 4px 0 #d69aae !important;
 }
@@ -854,10 +934,18 @@ button:active {
     display: none;
   }
 
-  .record-status {
+  .app-header .record-status {
     width: 44px;
+    height: 44px;
+    min-height: 44px;
     padding: 0;
     justify-content: center;
+  }
+
+  .app-header .header-actions,
+  .app-header .header-actions .icon-action {
+    height: 44px;
+    min-height: 44px;
   }
 
   .record-status span {
@@ -988,6 +1076,15 @@ button:active {
   .workspace-tab {
     padding-left: 5px;
     padding-right: 5px;
+  }
+
+  .summary-toolbar {
+    align-items: flex-start;
+  }
+
+  .summary-toolbar > span {
+    padding-top: 3px;
+    line-height: 1.4;
   }
 
   .transcript-heading > span {
