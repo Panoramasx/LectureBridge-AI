@@ -580,7 +580,7 @@ Include 5 cue questions, 5 flashcards, and 3 quiz questions.`;
 });
 
 type ClientAudioMessage = {
-  type: "audio_chunk";
+  type: "audio_chunk" | "session_finish";
   sessionId?: string;
   seq?: number;
   mimeType?: string;
@@ -641,12 +641,7 @@ const findTextValue = (value: any): string => {
 
 const shouldEmitTranscript = (event: any) => {
   const type = String(event?.type || "");
-  return (
-    type.includes("transcription") ||
-    type.includes("translation") ||
-    type === "response.text.done" ||
-    type === "conversation.item.input_audio_transcription.completed"
-  );
+  return type === "conversation.item.input_audio_transcription.completed";
 };
 
 const setupLiveAudioWebSocket = (server: http.Server) => {
@@ -730,7 +725,17 @@ const setupLiveAudioWebSocket = (server: http.Server) => {
 
     clientWs.on("message", (data) => {
       const message = safeJson(data) as ClientAudioMessage | null;
-      if (!message || message.type !== "audio_chunk") return;
+      if (!message) return;
+      if (message.type === "session_finish") {
+        if (qwenWs?.readyState === WebSocket.OPEN) {
+          qwenWs.send(JSON.stringify({
+            event_id: `finish-${sessionId}-${Date.now()}`,
+            type: "session.finish",
+          }));
+        }
+        return;
+      }
+      if (message.type !== "audio_chunk") return;
       if (!message.base64Audio) {
         sendClient({ type: "error", sessionId, seq: message.seq, message: "Empty audio chunk skipped." });
         return;

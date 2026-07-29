@@ -456,12 +456,7 @@ const findTextValue = (value) => {
 
 const shouldEmitTranscript = (event) => {
   const type = String(event?.type || "");
-  return (
-    type.includes("transcription") ||
-    type.includes("translation") ||
-    type === "response.text.done" ||
-    type === "conversation.item.input_audio_transcription.completed"
-  );
+  return type === "conversation.item.input_audio_transcription.completed";
 };
 
 const handleLiveAudioWebSocket = async (request, env) => {

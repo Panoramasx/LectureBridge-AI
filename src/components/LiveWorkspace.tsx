@@ -435,8 +435,15 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     if (audioContextRef.current && audioContextRef.current.state !== "closed") {
       audioContextRef.current.close();
     }
-    if (liveAudioWsRef.current && liveAudioWsRef.current.readyState === WebSocket.OPEN) {
-      liveAudioWsRef.current.close();
+    const closingSocket = liveAudioWsRef.current;
+    if (closingSocket && closingSocket.readyState === WebSocket.OPEN) {
+      closingSocket.send(JSON.stringify({
+        type: "session_finish",
+        sessionId: sessionIdRef.current,
+      }));
+      window.setTimeout(() => {
+        if (closingSocket.readyState === WebSocket.OPEN) closingSocket.close();
+      }, 1500);
     }
 
     audioProcessorRef.current = null;
