@@ -136,6 +136,15 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
     let cancelled = false;
     const timeout = window.setTimeout(async () => {
       const item = selectedCourse.simulatedAudioScript[simulationIndex];
+      const chunkId = `sim-${selectedCourse.id}-${simulationIndex}`;
+      const alreadyHas = (previous: TranscriptChunk[]) =>
+        previous.some(
+          (chunk) =>
+            chunk.id === chunkId ||
+            (chunk.timestamp === item.timestamp &&
+              chunk.seconds === item.seconds &&
+              chunk.textEn.trim() === item.textEn.trim()),
+        );
       try {
         const data = await cachedPost<any>("/api/analyze-chunk", {
           transcriptChunk: item.textEn,
@@ -144,7 +153,6 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
         });
         if (cancelled) return;
 
-        const chunkId = `sim-${selectedCourse.id}-${simulationIndex}`;
         const newChunk: TranscriptChunk = {
           id: chunkId,
           timestamp: item.timestamp,
@@ -156,21 +164,26 @@ export const LiveWorkspace: React.FC<LiveWorkspaceProps> = ({
           detectedTerms: data.success ? data.analysis.detectedTerms : item.detectedTerms,
         };
 
-        setTranscripts((previous) => {
-          const alreadyAdded = previous.some(
-            (chunk) =>
-              chunk.id === chunkId ||
-              (chunk.timestamp === item.timestamp &&
-                chunk.seconds === item.seconds &&
-                chunk.textEn.trim() === item.textEn.trim()),
-          );
-          return alreadyAdded ? previous : [...previous, newChunk];
-        });
+        setTranscripts((previous) => (alreadyHas(previous) ? previous : [...previous, newChunk]));
         setSimulationIndex((current) => (current === simulationIndex ? current + 1 : current));
       } catch (error) {
         if (!cancelled) {
-          console.error("Analysis failed:", error);
-          setIsSimulating(false);
+          // Offline demo: the backend is unavailable, so use the course's built-in script.
+          console.warn("Analyze-chunk unavailable, using built-in demo:", error);
+          const fallbackChunk: TranscriptChunk = {
+            id: chunkId,
+            timestamp: item.timestamp,
+            seconds: item.seconds,
+            textEn: item.textEn,
+            chineseSummary: item.chineseSummary,
+            difficulty: item.difficulty,
+            contextBridge: "",
+            detectedTerms: item.detectedTerms,
+          };
+          setTranscripts((previous) =>
+            alreadyHas(previous) ? previous : [...previous, fallbackChunk],
+          );
+          setSimulationIndex((current) => (current === simulationIndex ? current + 1 : current));
         }
       }
     }, 5000);
